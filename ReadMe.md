@@ -1,5 +1,5 @@
 # Vertical Federated Learning Pytorch Neural Network Implementation
-Basic vertical federated learning training and testing using FedAvg server strategy.
+Basic vertical federated learning training and testing using FedAvg server strategy. I have used <a href='https://www.kaggle.com/competitions/titanic/data'>Titanic Dataset</a> for this.
 
 <h2>Simple Overview </h2>
 <h3>Trainig</h3>
