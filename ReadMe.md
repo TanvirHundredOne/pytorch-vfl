@@ -10,7 +10,7 @@ Basic vertical federated learning training and testing using FedAvg server strat
 
 <h3>Testing</h3>
 
-- On
+- Coming up...
 
 
 
