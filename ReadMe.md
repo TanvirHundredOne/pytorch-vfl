@@ -8,9 +8,7 @@ Basic vertical federated learning training and testing using FedAvg server strat
 
 - N Clients, each having its own set of trainnig features, forward_pass own client model, share embedding to server, recieves embedding gradients on which it runs backprop.
 
-<h3>Testing</h3>
-
-- Coming up...
+- Validation and Baatching supported.
 
 
 
