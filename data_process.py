@@ -92,3 +92,16 @@ def _partition_data(df, all_keywords):
 
 def data_transform(data):
     return StandardScaler().fit_transform(data)
+
+
+def gen_batches(data_num, batch_size):
+    batch_num = data_num // batch_size
+    size_list = [batch_size] * batch_num
+    indexes = np.arange(data_num)
+    np.random.shuffle(indexes)
+    res = list()
+    b = 0
+    for size in size_list:
+        res.append(indexes[b : b + size])
+        b += size
+    return res

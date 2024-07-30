@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from params import *
+from data_process import gen_batches
 
 # ,server_strategy='FedAvg'
 # server==Model that trains on aggregate features from clients and returns embedding
@@ -23,16 +24,16 @@ class ServerModel(nn.Module):
 
 
 class ServerStrategy:
-    def __init__(self, train_labels, test_labels, server_config):
+    def __init__(self, train_labels):
+        server_config = SERVER_CONFIG
         self.label = torch.tensor(train_labels).float().unsqueeze(1)
-        self.test_label = torch.tensor(test_labels).float().unsqueeze(1)
-
         self.model = ServerModel(server_config["server_model_input_size"])
         # self.server_config = server_config
         self.class_num = server_config["class_num"]
         self.client_num = server_config["client_num"]
         self.epoch_num = server_config["epoch_num"]
-        self.num_rounds = server_config["round_num"]
+        self.epoch_num = server_config["epoch_num"]
+        self.train_data_num = len(train_labels)
         # self.lr = server_config['learning_rate']
         # server_config["split_list"] = [4, 4, 4]  # comment this while running
         self.split_list = server_config["split_list"]
@@ -46,52 +47,57 @@ class ServerStrategy:
 
         if server_config["batch_train"]:
             self.batch_size = server_config["batch_size"]
-            # embedding and gradient data
-            self.embedding_data = np.zeros(
-                shape=(self.client_num, self.class_num, self.batch_size)
-            )
-            # For test eval
-            self.test_embedding_data = np.zeros(
-                shape=(self.client_num, self.class_num, len(self.Y_test))
-            )
+            # # embedding and gradient data
+            # self.embedding_data = np.zeros(
+            #     shape=(self.client_num, self.class_num, self.batch_size)
+            # )
+            # # For test eval
+            # self.test_embedding_data = np.zeros(
+            #     shape=(self.client_num, self.class_num, len(self.Y_test))
+            # )
 
-            self.batch_indexes = [0] * self.batch_size
+            # self.batch_indexes = [0] * self.batch_size
 
-            # w.r.t each client's embedding data
-            self.embedding_grads = np.zeros(shape=(self.class_num, self.batch_size))
+            # # w.r.t each client's embedding data
+            # self.embedding_grads = np.zeros(shape=(self.class_num, self.batch_size))
+        else:
+            self.batch_size = self.train_data_num
 
     def attach_clients(self, clients_list):
         self.clients = clients_list
 
     def server_train(self):
         pretty_print("VFL Training Starts")
-        for i in range(0, self.num_rounds):
-            pretty_print(f"Round>>{i}")
-            self.get_client_embeddings()
-            self.aggregate_embdedding()
-            self.fit_server()
-            self.compute_loss()
-            self.backprop_server()
-            self.send_embedding_gradients()
-            if self.get_metrics:  # spcify this in seperate func
-                self.get_model_metrics()
-                pretty_print(f"Model Metrics::\n{self.metrics_aggregated}")
+        for epoch in range(0, self.epoch_num):
+            # pretty_print(f"Round>>{round_num}")
+            batch_num = self.train_data_num // self.batch_size
+            # Divide batches
+            batches = gen_batches(self.train_data_num, self.batch_size)
 
-    def server_test(self):
-        test_embedding_results = [
-            torch.from_numpy(np.array(client.get_test_embedding()))
-            for client in self.clients
-        ]
-        test_embeddings_aggregated = torch.cat(test_embedding_results, dim=1)
-        test_server_embedding = test_embeddings_aggregated.detach().requires_grad_()
-        preds = self.model(test_server_embedding).detach().numpy()
-        correctness = 0
-        for pred, label in zip(preds, self.test_label.detach().numpy()):
-            if (pred > 0.5).astype(float)[0] == label[0]:
-                correctness += 1
-        pretty_print(f"Correct prediction {correctness} out of {preds.shape[0]} labels")
+            for i in range(batch_num):
+                pretty_print(f"batch no. {i}")
+                batch_indexes = batches[i]
+                for client in self.clients:
+                    client.set_batch_indexes(batch_indexes)
+                batch_labels = torch.tensor(
+                    np.array(self.label)[batch_indexes.astype(int)]
+                )
+                self.get_client_embeddings()
+                self.aggregate_embdedding()
+                self.fit_server()
+                self.compute_loss(batch_labels)
+                self.backprop_server()
+                self.send_embedding_gradients()
+                if self.get_metrics:  # spcify this in seperate func
+                    self.get_training_metrics(batch_labels)
+                    pretty_print(f"Model Metrics::\n{self.metrics_aggregated}")
+                # return self.metrics_aggregated['accuracy']
 
-        # return output
+    def server_test(self, test_data, test_label):
+        pretty_print("VFL Testing Starts")
+        self.create_test_embedding(test_data)
+        self.get_test_predictions(test_label)
+        pretty_print(f"test metrics:: {self.test_metrics}")
 
     def get_client_embeddings(self):
         self.client_embedding_results = [
@@ -99,16 +105,20 @@ class ServerStrategy:
         ]
 
     def aggregate_embdedding(self):
+        self.get_client_embeddings()
         self.embeddings_aggregated = torch.cat(self.client_embedding_results, dim=1)
         self.server_embedding = self.embeddings_aggregated.detach().requires_grad_()
+        # pretty_print(self.server_embedding.shape)
         # self.fit_server()
         # self.backprop_server()
 
     def fit_server(self):
         self.output = self.model(self.server_embedding)
+        # pretty_print(self.output.shape)
 
-    def compute_loss(self):
-        self.loss = self.criterion(self.output, self.label)
+    def compute_loss(self, labels):
+        self.loss = self.criterion(self.output, labels)
+        # pretty_print(self.loss.shape)
 
     def backprop_server(self):
         self.optimizer.zero_grad()
@@ -116,29 +126,44 @@ class ServerStrategy:
         self.optimizer.step()
 
     def send_embedding_gradients(self):
-        grads = self.server_embedding.grad.split([4, 4, 4], dim=1)  # self.split_list
+        grads = self.server_embedding.grad.split(
+            self.split_list, dim=1
+        )  # self.split_list
         np_grads = [grad.numpy() for grad in grads]
         for cid in range(0, self.client_num):
-            self.clients[cid].evaluate(np_grads)
+            self.clients[cid].backprop(np_grads)
 
-    def get_model_metrics(self):
+    def get_training_metrics(self, labels):
         with torch.no_grad():
             correct = 0
             output = self.model(self.server_embedding)
             predicted = (output > 0.5).float()
 
-            correct += (predicted == self.label).sum().item()
+            correct += (predicted == labels).sum().item()
 
-            accuracy = correct / len(self.label) * 100
+            accuracy = correct / len(labels) * 100
 
         self.metrics_aggregated = {"accuracy": accuracy}
 
+    def create_test_embedding(self, test_data):
+        test_embedding = []
+        for i in range(len(test_data)):
+            test_embedding.append(self.clients[i].fit_test(test_data[i]))
+        self.test_embeddings = np.concatenate((test_embedding), axis=1)
 
-def testing(server):
-    server.get_client_embeddings()
-    server.aggregate_embdedding()
-    server.fit_server()
-    pretty_print(server.output)
+    def get_test_predictions(self, test_labels):
+        with torch.no_grad():
+            correct = 0
+            test_labels = torch.tensor(test_labels).float().unsqueeze(1)
+            output = self.model(torch.tensor(self.test_embeddings).float())
+            predicted = output > 0.5
+            # pretty_print(f"{type(predicted)}---{predicted.shape}---{predicted}")
+            # pretty_print(f"{type(test_labels)}---{test_labels.shape}----{test_labels}")
+            correct += (predicted == test_labels).sum().item()
+
+            accuracy = correct / len(test_labels) * 100
+
+        self.test_metrics = {"accuracy": accuracy}
 
 
 # class ServerStrategy:  # fl.server.strategy.FedAvg

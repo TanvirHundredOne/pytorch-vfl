@@ -12,7 +12,8 @@ SERVER_CONFIG = {
     "round_num": 300,
     # "split_list": [4, 4, 4], Composite
     "get_metrics": True,
-    "batch_train": False,
+    "batch_train": True,
+    "batch_size": 100,
 }
 CLIENT_CONFIG = {"client_model_out_size": 4, "client_weight": "same"}
 
@@ -21,6 +22,10 @@ def create_composite_cofigs():
     # create embedding split_strategy
     embedding_split_strategy()
     create_server_model_input_size()
+    if SERVER_CONFIG["batch_train"]:
+        CLIENT_CONFIG["batch_train"] = True
+    else:
+        CLIENT_CONFIG["batch_train"] = False
 
 
 def embedding_split_strategy():
